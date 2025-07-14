@@ -1,3 +1,7 @@
+
+require("dotenv").config(); // ✅ FIRST line — loads .env variables
+
+
 const express = require('express');
 const app = express();
 const cors = require('cors');
@@ -5,6 +9,7 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
 const jwt  = require('jsonwebtoken');
+
 
 // Middleware
 app.use(express.json());
@@ -364,11 +369,178 @@ app.post('/addtocart', fetchUser, async (req, res) => {
 
   })
   
-  
-  
+
+
+const axios = require("axios");
+
+// app.post("/chat-query", async (req, res) => {
+//   const userMessage = req.body.message;
+
+//   try {
+//     const geminiRes = await axios.post(
+//       `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`,
+//       {
+//         contents: [
+//           {
+//             role: "user",
+//             parts: [{ text: userMessage }],
+//           },
+//         ],
+//       },
+//       {
+//         headers: {
+//           "Content-Type": "application/json",
+//         },
+//       }
+//     );
+
+//     const botReply =
+//       geminiRes.data.candidates[0]?.content?.parts[0]?.text ||
+//       "I couldn't generate a response.";
+//     res.json({ response: botReply });
+//   } catch (error) {
+//     console.error("❌ Gemini Error:", error.response?.data || error.message);
+//     res
+//       .status(500)
+//       .json({ error: "Gemini AI is unavailable. Try again later." });
+//   }
+// });
+
+
+
   
 
   
+app.post("/chat-query", async (req, res) => {
+  const userMessageRaw = req.body.message || "";
+  const userMessage = userMessageRaw.toLowerCase().trim();
+
+  // Check for product-related query
+  const isProductQuery =
+    userMessage.includes("show me") ||
+    userMessage.includes("under ₹") ||
+    userMessage.includes("under") ||
+    userMessage.includes("price") ||
+    userMessage.includes("category") ||
+    userMessage.includes("dresses") ||
+    userMessage.includes("shirts") ||
+    userMessage.includes("tshirts") ||
+    userMessage.includes("jeans");
+
+  // Only try to fetch products if it's a product-related query
+  if (isProductQuery) {
+    try {
+      const categoryMatch = userMessage.includes("women")
+        ? "women"
+        : userMessage.includes("men")
+        ? "men"
+        : userMessage.includes("kid")
+        ? "kid"
+        : null;
+
+      const priceMatch = userMessage.match(/under\s*₹?(\d+)/);
+      const maxPrice = priceMatch ? parseInt(priceMatch[1]) : null;
+
+      if (!categoryMatch || !maxPrice) {
+        return res.json({
+          response:
+            "Please mention a category and price. For example: 'Show me women dresses under ₹1000'",
+        });
+      }
+
+      const products = await Product.find({
+        category: categoryMatch,
+        new_price: { $lte: maxPrice },
+      });
+
+      if (products.length === 0) {
+        return res.json({
+          response: "Sorry, no matching products found.",
+        });
+      }
+
+      const productList = products
+        .map(
+          (p) =>
+            `🛍️ *${p.name}*\n₹${p.new_price}\n[View Product](http://localhost:3000/product/${p.id})`
+        )
+        .join("\n\n");
+
+      return res.json({ response: productList });
+    } catch (error) {
+      console.error("❌ Chatbot product fetch error:", error.message);
+      return res
+        .status(500)
+        .json({ error: "Chatbot is unavailable. Try again later." });
+    }
+  }
+
+  // 🤖 DEFAULT: Use Gemini for general non-product queries
+  try {
+    const geminiRes = await axios.post(
+      `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${process.env.GOOGLE_API_KEY}`,
+      {
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: userMessageRaw }],
+          },
+        ],
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const botReply =
+      geminiRes.data.candidates[0]?.content?.parts[0]?.text ||
+      "I couldn't generate a response.";
+    return res.json({ response: botReply });
+  } catch (error) {
+    console.error("❌ Gemini Error:", error.response?.data || error.message);
+    return res.status(500).json({
+      error: "Gemini AI is unavailable. Try again later.",
+    });
+  }
+});
+
+
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
+app.post("/create-checkout-session", async (req, res) => {
+  try {
+    const { amount } = req.body;
+    console.log("Received cart total from frontend:", amount);
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: 'inr',
+            product_data: {
+              name: 'SHOPPER Cart Payment',
+            },
+            unit_amount: amount * 100, // Convert ₹ to paise
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: 'http://localhost:3000/success',
+      cancel_url: 'http://localhost:3000/cancel',
+    });
+
+    res.json({ id: session.id });
+  } catch (err) {
+    console.error("❌ Stripe session error:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+
 
 
 // Start the server
